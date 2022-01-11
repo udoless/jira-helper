@@ -38,6 +38,10 @@ async function initData() {
     }
 
     const pmsDomain = await chrome.storage.sync.get('pmsDomain')
+    if(!pmsDomain.pmsDomain) {
+        $('#tips').html('请在插件图标上右键”选项“中设置Jira域名后使用。')
+        return;
+    }
     const allData = await fetch(pmsDomain.pmsDomain + '/rest/greenhopper/1.0/xboard/work/allData.json?rapidViewId=' + rapidViewId + '&selectedProjectKey=' + selectedProjectKey + filterUrlParamsStr + '&_=' + Date.now())
         .then(resp => resp.json())
         .catch(error => null);
