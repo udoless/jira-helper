@@ -1,19 +1,32 @@
 <!DOCTYPE html>
 <html>
+
 <head>
-	<meta charset="utf-8"/>
+  <meta charset="utf-8" />
   <title>Extension Options</title>
 </head>
+
 <body>
 
-Jira域名(如: http://pms.xxx.com)
-<label>
-  <input type="text" id="pms-domain" placeholder="如: http://pms.xxx.com">
-</label>
+  <div>
+    Jira域名(如: http://pms.xxx.com)
+    <label>
+      <input type="text" id="pms-domain" placeholder="如: http://pms.xxx.com">
+    </label>
+  </div>
+  <p></p>
+  <div>
+    [可选]项目Key(如: QIXBACKEND)
+    <label>
+      <input type="text" id="project-key" placeholder="如: QIXBACKEND">
+    </label>
+  </div>
+  <div id="status"></div>
 
-<div id="status"></div>
-<button id="save">Save</button>
+  <p></p>
+  <button id="save">Save</button>
 
-<script src="options.js"></script>
+  <script src="options.js"></script>
 </body>
+
 </html>

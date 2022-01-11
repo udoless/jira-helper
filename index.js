@@ -30,12 +30,12 @@ async function initContentScript() {
 async function initData() {
     const pmsDomain = await chrome.storage.sync.get('pmsDomain')
     if (!pmsDomain.pmsDomain) {
-        $('#tips').html('请在插件图标上右键”选项“中设置Jira域名后使用。')
+        $('#tips').html('请在插件图标上右键”选项“中设置 Jira域名 后使用。')
         return;
     }
     const lastViewedTabId = await chrome.storage.sync.get('lastViewedTabId')
-    if(lastViewedTabId.lastViewedTabId){
-        $('#dev .nav-tabs a[aria-controls="'+lastViewedTabId.lastViewedTabId+'"]').click()
+    if (lastViewedTabId.lastViewedTabId) {
+        $('#dev .nav-tabs a[aria-controls="' + lastViewedTabId.lastViewedTabId + '"]').click()
     }
 
     let [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
@@ -46,8 +46,17 @@ async function initData() {
     }
     const urlParams = new URLSearchParams(url.split('?')[1]);
     const rapidViewId = urlParams.get('rapidView')
-    const selectedProjectKey = urlParams.get('projectKey')
+    let selectedProjectKey = urlParams.get('projectKey')
     let activeQuickFilters = urlParams.getAll('quickFilter')
+    if (!selectedProjectKey) {
+        const projectKey = await chrome.storage.sync.get('projectKey')
+        if (!projectKey.projectKey) {
+            $('#tips').html('请在插件图标上右键"选项"中设置 项目Key 后使用。')
+            return;
+        }
+        console.log('projectKey', projectKey.projectKey)
+        selectedProjectKey = projectKey.projectKey
+    }
     if (!rapidViewId || !selectedProjectKey) {
         return;
     }
