@@ -5,16 +5,39 @@ columnIdToStatus = {
     "10004": { 'text': '已提测', 'class': 'label-info' },
     "10005": { 'text': '测试中', 'class': 'label-success' },
 }
+$('#dev .nav-tabs a').click(function (e) {
+    e.preventDefault()
+    let tabId = $(this).attr('aria-controls')
+
+    $('#dev .nav-tabs li').removeClass('active')
+    $(this).parent('li').addClass('active')
+
+    $('#dev .tab-pane').removeClass('active')
+    $('#dev .tab-pane#' + tabId).addClass('active')
+    chrome.storage.sync.set({
+        lastViewedTabId: tabId
+    });
+})
 
 async function initContentScript() {
     let [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
     chrome.scripting.executeScript({
         target: { tabId: tab.id },
-        files: ['jquery-1.8.3.js', 'contentScript.js']
+        files: ['contentScript.js']
     });
 }
 
 async function initData() {
+    const pmsDomain = await chrome.storage.sync.get('pmsDomain')
+    if (!pmsDomain.pmsDomain) {
+        $('#tips').html('请在插件图标上右键”选项“中设置Jira域名后使用。')
+        return;
+    }
+    const lastViewedTabId = await chrome.storage.sync.get('lastViewedTabId')
+    if(lastViewedTabId.lastViewedTabId){
+        $('#dev .nav-tabs a[aria-controls="'+lastViewedTabId.lastViewedTabId+'"]').click()
+    }
+
     let [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
     console.log('current tab', tab);
     let url = tab.url;
@@ -37,11 +60,6 @@ async function initData() {
         activeQuickFilters.forEach(filter => filterUrlParamsStr += '&activeQuickFilters=' + filter)
     }
 
-    const pmsDomain = await chrome.storage.sync.get('pmsDomain')
-    if(!pmsDomain.pmsDomain) {
-        $('#tips').html('请在插件图标上右键”选项“中设置Jira域名后使用。')
-        return;
-    }
     const allData = await fetch(pmsDomain.pmsDomain + '/rest/greenhopper/1.0/xboard/work/allData.json?rapidViewId=' + rapidViewId + '&selectedProjectKey=' + selectedProjectKey + filterUrlParamsStr + '&_=' + Date.now())
         .then(resp => resp.json())
         .catch(error => null);
@@ -51,16 +69,155 @@ async function initData() {
     }
 
     let issues = allData.issuesData.issues;
-    let devStoryPointSum = {};
-    let devStoryPointDetail = {};
-    let emptyStoryPointCount = 0;
-    let emptyStoryPointKeys = []
     let issueIdsExceptTestingPassed = []
+    let issueIdToStatusEle = {}
     issues.forEach(function (issue) {
         if (issue.statusId == '10006') {
             return;
         }
         issueIdsExceptTestingPassed.push(issue.id)
+
+        let status = columnIdToStatus[issue.statusId];
+        let className = "label-info";
+        let statusText = issue.statusName;
+        if (status != null) {
+            className = status.class;
+            statusText = status.text
+        }
+        issueIdToStatusEle[issue.id] = '<span class="label ' + className + '">' + statusText + '</span>';
+    })
+
+
+    renderDev({ issues, issueIdToStatusEle })
+
+    let issuesExceptTestingPassedArr = await Promise.all(issueIdsExceptTestingPassed.map(issueId =>
+        fetch(pmsDomain.pmsDomain + "/secure/AjaxIssueEditAction!default.jspa?decorator=none&issueId=" + issueId + "&_=" + Date.now()).then(resp => resp.json())
+    ));
+    let i = 0;
+    let issuesExceptTestingPassed = {}
+    issueIdsExceptTestingPassed.map(issueId => {
+        issuesExceptTestingPassed[issueId] = issuesExceptTestingPassedArr[i++];
+    });
+    console.log('issuesExceptTestingPassed', issuesExceptTestingPassed)
+
+    renderTester({ issuesExceptTestingPassed, issueIdToStatusEle })
+    renderComponent({ issuesExceptTestingPassed, issueIdToStatusEle })
+}
+
+function getFieldValueFromIssueDetail(issueDetail, fieldName, type = 'input') {
+    let field = issueDetail.fields.find(function (field) {
+        return field.id == fieldName;
+    });
+    if (!field) {
+        return null;
+    }
+    if (type == 'input') {
+        return $(field.editHtml).find('#' + fieldName).val();
+    } else if (type == 'select') {
+        return $(field.editHtml).find('#' + fieldName).children('option:selected').text();
+    }
+    return null;
+}
+
+async function renderComponent(request) {
+    let issuesExceptTestingPassed = request.issuesExceptTestingPassed
+
+    let componentStoryPointSum = {}
+    let componentStoryPointDetail = {}
+    for (const [issueId, issueDetail] of Object.entries(issuesExceptTestingPassed)) {
+        let issueTitle = getFieldValueFromIssueDetail(issueDetail, 'summary');
+        let componentName = getFieldValueFromIssueDetail(issueDetail, 'components', 'select');
+        let storyPoint = parseFloat(getFieldValueFromIssueDetail(issueDetail, 'customfield_10006'));
+        if (isNaN(storyPoint)) {
+            storyPoint = 0;
+        }
+        if (!componentName || storyPoint == 0) {
+            continue;
+        }
+        if (!componentStoryPointSum[componentName]) {
+            componentStoryPointSum[componentName] = storyPoint
+        } else {
+            componentStoryPointSum[componentName] += storyPoint
+        }
+        if (!componentStoryPointDetail[componentName]) {
+            componentStoryPointDetail[componentName] = []
+        }
+        componentStoryPointDetail[componentName].push(request.issueIdToStatusEle[issueId] + ' ' + issueTitle + ': ' + storyPoint)
+    }
+
+    if (componentStoryPointSum.length === 0) {
+        $('#componentResultTbody').html('No result.')
+    } else {
+        let tbody = ''
+
+        Object.keys(componentStoryPointSum).forEach(function (componentName) {
+            let detailHtml = '<ul style="list-style-type: none;margin-bottom:0;">';
+            componentStoryPointDetail[componentName].forEach(function (el) {
+                detailHtml += '<li>' + el + '</li>'
+            })
+            detailHtml += '</ul>'
+            tbody += '<tr><td>' + componentName + '</td><td>' + componentStoryPointSum[componentName] + '</td><td>' + detailHtml + '</td></tr>'
+        })
+
+        $('#componentResultTbody').html(tbody)
+    }
+}
+
+
+async function renderTester(request) {
+    let issuesExceptTestingPassed = request.issuesExceptTestingPassed
+
+    let testerStoryPointSum = {}
+    let testerStoryPointDetail = {}
+    for (const [issueId, issueDetail] of Object.entries(issuesExceptTestingPassed)) {
+        let issueTitle = getFieldValueFromIssueDetail(issueDetail, 'summary');
+        let testerUsername = getFieldValueFromIssueDetail(issueDetail, 'customfield_10014');
+        let storyPoint = parseFloat(getFieldValueFromIssueDetail(issueDetail, 'customfield_32901'));
+        if (isNaN(storyPoint)) {
+            storyPoint = 0;
+        }
+        if (!testerUsername || storyPoint == 0) {
+            continue;
+        }
+        if (!testerStoryPointSum[testerUsername]) {
+            testerStoryPointSum[testerUsername] = storyPoint
+        } else {
+            testerStoryPointSum[testerUsername] += storyPoint
+        }
+        if (!testerStoryPointDetail[testerUsername]) {
+            testerStoryPointDetail[testerUsername] = []
+        }
+        testerStoryPointDetail[testerUsername].push(request.issueIdToStatusEle[issueId] + ' ' + issueTitle + ': ' + storyPoint)
+    }
+
+    console.log('testerStoryPointSum', testerStoryPointSum, 'testerStoryPointDetail', testerStoryPointDetail)
+    if (testerStoryPointSum.length === 0) {
+        $('#testerResultTbody').html('No result.')
+    } else {
+        let tbody = ''
+
+        Object.keys(testerStoryPointSum).forEach(function (testerUsername) {
+            let detailHtml = '<ul style="list-style-type: none;margin-bottom:0;">';
+            testerStoryPointDetail[testerUsername].forEach(function (el) {
+                detailHtml += '<li>' + el + '</li>'
+            })
+            detailHtml += '</ul>'
+            tbody += '<tr><td>' + testerUsername + '</td><td>' + testerStoryPointSum[testerUsername] + '</td><td>' + detailHtml + '</td></tr>'
+        })
+
+        $('#testerResultTbody').html(tbody)
+    }
+}
+
+function renderDev(request) {
+    let devStoryPointSum = {};
+    let devStoryPointDetail = {};
+    let emptyStoryPointCount = 0;
+    let emptyStoryPointKeys = []
+    request.issues.forEach(function (issue) {
+        if (issue.statusId == '10006') {
+            return;
+        }
 
         let issueTitle = issue.summary;
         let devUsername = issue.extraFields[0].html
@@ -81,14 +238,7 @@ async function initData() {
         if (!devStoryPointDetail[devUsername]) {
             devStoryPointDetail[devUsername] = []
         }
-        let status = columnIdToStatus[issue.statusId];
-        let className = "label-info";
-        let statusText = issue.statusName;
-        if (status != null) {
-            className = status.class;
-            statusText = status.text
-        }
-        devStoryPointDetail[devUsername].push('<span class="label ' + className + '">' + statusText + '</span> ' + issueTitle + ': ' + storyPoint)
+        devStoryPointDetail[devUsername].push(request.issueIdToStatusEle[issue.id] + ' ' + issueTitle + ': ' + storyPoint)
     })
 
     if (emptyStoryPointCount > 0) {
@@ -97,77 +247,6 @@ async function initData() {
         });
         $('#tips').html('其中有 ' + emptyStoryPointCount + ' 个单子未设置研发工作量，已高亮背景显示')
     }
-    renderDev({ devStoryPointSum, devStoryPointDetail })
-    renderTester({ issueIdsExceptTestingPassed })
-}
-
-function getFieldValueFromIssueDetail(issueDetail, fieldName) {
-    let field = issueDetail.fields.find(function (field) {
-        return field.id == fieldName;
-    });
-    if (!field) {
-        return null;
-    }
-    return $(field.editHtml).find('#' + fieldName).val();;
-}
-
-async function renderTester(request) {
-    const issueIdsExceptTestingPassed = request.issueIdsExceptTestingPassed;
-
-    let issueDetails = []
-
-    const pmsDomain = await chrome.storage.sync.get('pmsDomain');
-    Promise.all(issueIdsExceptTestingPassed.map(issueId =>
-        fetch(pmsDomain.pmsDomain + "/secure/AjaxIssueEditAction!default.jspa?decorator=none&issueId=" + issueId + "&_=" + Date.now()).then(resp => resp.json())
-    )).then(issueDetails => {
-        console.log('resp issueDetails', issueDetails)
-
-        let testerStoryPointSum = {}
-        let testerStoryPointDetail = {}
-        issueDetails.forEach(function (issueDetail) {
-            let issueTitle = getFieldValueFromIssueDetail(issueDetail, 'summary');
-            let testerUsername = getFieldValueFromIssueDetail(issueDetail, 'customfield_10014');
-            let storyPoint = parseFloat(getFieldValueFromIssueDetail(issueDetail, 'customfield_32901'));
-            if (isNaN(storyPoint)) {
-                storyPoint = 0;
-            }
-            if (!testerUsername || storyPoint == 0) {
-                return;
-            }
-            if (!testerStoryPointSum[testerUsername]) {
-                testerStoryPointSum[testerUsername] = storyPoint
-            } else {
-                testerStoryPointSum[testerUsername] += storyPoint
-            }
-            if (!testerStoryPointDetail[testerUsername]) {
-                testerStoryPointDetail[testerUsername] = []
-            }
-            testerStoryPointDetail[testerUsername].push(issueTitle + ': ' + storyPoint)
-        });
-
-        console.log('testerStoryPointSum', testerStoryPointSum, 'testerStoryPointDetail', testerStoryPointDetail)
-        if (testerStoryPointSum.length === 0) {
-            $('#testerResultTbody').html('No result.')
-        } else {
-            let tbody = ''
-
-            Object.keys(testerStoryPointSum).forEach(function (testerUsername) {
-                let detailHtml = '<ul style="list-style-type: none;margin-bottom:0;">';
-                testerStoryPointDetail[testerUsername].forEach(function (el) {
-                    detailHtml += '<li>' + el + '</li>'
-                })
-                detailHtml += '</ul>'
-                tbody += '<tr><td>' + testerUsername + '</td><td>' + testerStoryPointSum[testerUsername] + '</td><td>' + detailHtml + '</td></tr>'
-            })
-
-            $('#testerResultTbody').html(tbody)
-        }
-    })
-}
-
-function renderDev(request) {
-    let devStoryPointSum = request.devStoryPointSum;
-    let devStoryPointDetail = request.devStoryPointDetail;
 
     if (devStoryPointSum.length === 0) {
         $('#devResultTbody').html('No result.')
