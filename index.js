@@ -137,8 +137,12 @@ async function renderComponent(request) {
         let issueTitle = getFieldValueFromIssueDetail(issueDetail, 'summary');
         let componentName = getFieldValueFromIssueDetail(issueDetail, 'components', 'select');
         let storyPoint = parseFloat(getFieldValueFromIssueDetail(issueDetail, 'customfield_10006'));
+        if (!componentStoryPointDetail[componentName]) {
+            componentStoryPointDetail[componentName] = []
+        }
         if (isNaN(storyPoint)) {
-            storyPoint = 0;
+            componentStoryPointDetail[componentName].push(request.issueIdToStatusEle[issueId] + ' ' + issueTitle + ': ?')
+            continue;
         }
         if (!componentName || storyPoint == 0) {
             continue;
@@ -148,9 +152,7 @@ async function renderComponent(request) {
         } else {
             componentStoryPointSum[componentName] += storyPoint
         }
-        if (!componentStoryPointDetail[componentName]) {
-            componentStoryPointDetail[componentName] = []
-        }
+        
         componentStoryPointDetail[componentName].push(request.issueIdToStatusEle[issueId] + ' ' + issueTitle + ': ' + storyPoint)
     }
 
@@ -231,9 +233,15 @@ function renderDev(request) {
         let issueTitle = issue.summary;
         let devUsername = issue.extraFields[0].html
         let storyPoint = issue.estimateStatistic.statFieldValue.value
+        if (!devStoryPointDetail[devUsername]) {
+            devStoryPointDetail[devUsername] = []
+        }
         if (storyPoint == undefined) {
             emptyStoryPointCount++;
             emptyStoryPointKeys.push(issue.key);
+            if(devUsername){
+                devStoryPointDetail[devUsername].push(request.issueIdToStatusEle[issue.id] + ' ' + issueTitle + ': ?')
+            }
             return;
         }
         if (!devUsername || storyPoint == 0) {
@@ -244,9 +252,7 @@ function renderDev(request) {
         } else {
             devStoryPointSum[devUsername] += storyPoint
         }
-        if (!devStoryPointDetail[devUsername]) {
-            devStoryPointDetail[devUsername] = []
-        }
+        
         devStoryPointDetail[devUsername].push(request.issueIdToStatusEle[issue.id] + ' ' + issueTitle + ': ' + storyPoint)
     })
 

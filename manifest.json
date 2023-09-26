@@ -1,7 +1,7 @@
 {
   "name": "Jira Rapid Board Helper",
   "description": "",
-  "version": "1.8.1",
+  "version": "1.8.2",
   "author": "udoless@gmail.com",
   "manifest_version": 3,
   "background": {
